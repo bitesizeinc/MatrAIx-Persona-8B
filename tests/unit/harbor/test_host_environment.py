@@ -55,6 +55,9 @@ def test_host_environment_resolves_container_paths(tmp_path: Path) -> None:
     assert env.resolve_container_path("/tests/test_state.py") == (
         tests_dir / "test_state.py"
     ).resolve()
+    assert env.resolve_container_path("/tmp/matraix_mcp_call_client.py") == (
+        Path("/tmp") / "matraix_mcp_call_client.py"
+    ).resolve()
 
     with pytest.raises(ValueError):
         env.resolve_container_path("/unknown/path")

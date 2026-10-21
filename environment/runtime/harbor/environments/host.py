@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import shutil
+import uuid
 from pathlib import Path, PurePosixPath
 
 import yaml
@@ -112,6 +113,12 @@ class HostEnvironment(BaseEnvironment):
         elif parts[0] == "tests":
             rel = Path(*parts[1:]) if len(parts) > 1 else Path(".")
             host_path = self._tests_root / rel
+        elif parts[0] == "tmp":
+            # Scratch files such as the chat MCP call client are addressed by
+            # a fixed ``/tmp/...`` path in exec commands, so the host mapping
+            # must keep that literal location rather than relocate it.
+            rel = Path(*parts[1:]) if len(parts) > 1 else Path(".")
+            host_path = Path("/tmp") / rel
         else:
             raise ValueError("unsupported host container path: {}".format(container_path))
         return host_path.resolve()
@@ -386,7 +393,11 @@ class HostEnvironment(BaseEnvironment):
         source = Path(source_path)
         destination = self.resolve_container_path(target_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        # Concurrent trials may upload the same shared scratch file; write to a
+        # sibling temp name and swap it in so readers never see a partial copy.
+        staged = destination.with_name(f".{destination.name}.{uuid.uuid4().hex[:8]}.part")
+        shutil.copy2(source, staged)
+        os.replace(staged, destination)
 
     async def upload_dir(self, source_dir: Path | str, target_dir: str) -> None:
         if self._maps_to_repo_tests(target_dir):
