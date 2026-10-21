@@ -120,6 +120,9 @@ class AnthropicToolStepClient:
             or os.environ.get("CLAUDE_API_KEY")
             or ""
         ).strip()
+        # Organization-level keys (not scoped to a workspace) must name the
+        # workspace on every request via the anthropic-workspace-id header.
+        self.workspace_id = (os.environ.get("ANTHROPIC_WORKSPACE_ID") or "").strip()
         if not self.api_key:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY or CLAUDE_API_KEY is required for persona model {}".format(
@@ -148,16 +151,19 @@ class AnthropicToolStepClient:
         }
         if openai_model_supports_custom_temperature(self.model):
             body["temperature"] = self.temperature
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+        }
+        if self.workspace_id:
+            headers["anthropic-workspace-id"] = self.workspace_id
         request = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
             data=json.dumps(body).encode("utf-8"),
             method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-            },
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:

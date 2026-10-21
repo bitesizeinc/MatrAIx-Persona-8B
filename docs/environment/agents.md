@@ -109,7 +109,7 @@ differ by agent:
 
 | Agent | Required on host | Notes |
 |-------|------------------|-------|
-| `persona-json-survey` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, or `OPENROUTER_API_KEY` | Match `-m` / YAML `model_name`. Auto host-native survey. |
+| `persona-json-survey` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, or `OPENROUTER_API_KEY` | Match `-m` / YAML `model_name`. Auto host-native survey. Anthropic keys not scoped to a workspace also need `ANTHROPIC_WORKSPACE_ID`. |
 | `persona-user-sim` | Persona: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, or `OPENROUTER_API_KEY`; often `OPENAI_API_KEY` for SUT | Persona model via `-m`; chat sidecar engine via `MATRIX_CHATBOT_ENGINE` (default `gpt-4o-mini`). |
 | `persona-claude-code` | `ANTHROPIC_API_KEY` (or subscription — see below) | Anthropic models |
 | `persona-gemini-cli` | `GEMINI_API_KEY` (or subscription — see below) | Google models, e.g. `google/gemini-2.5-pro` |

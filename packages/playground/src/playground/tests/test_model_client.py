@@ -345,3 +345,67 @@ def test_build_json_client_requires_zai_key(monkeypatch):
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="ZAI_API_KEY"):
         build_json_client("zai/glm-5")
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def read(self) -> bytes:
+        import json
+
+        return json.dumps(self._payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _capture_anthropic_request(monkeypatch, payload: dict):
+    seen: list = []
+
+    def fake_urlopen(request, timeout=None):
+        seen.append(request)
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    return seen
+
+
+def test_anthropic_json_client_sends_workspace_header_when_set(monkeypatch):
+    from playground.model_client import AnthropicJSONClient
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_test")
+    seen = _capture_anthropic_request(
+        monkeypatch,
+        {"content": [{"type": "text", "text": "{\"ok\": true}"}], "stop_reason": "end_turn"},
+    )
+
+    client = AnthropicJSONClient("claude-haiku-4-5")
+    assert client.complete_json("sys", "user") == {"ok": True}
+    assert seen[0].get_header("Anthropic-workspace-id") == "wrkspc_test"
+
+
+def test_anthropic_json_client_omits_workspace_header_by_default(monkeypatch):
+    from playground.model_client import AnthropicJSONClient
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
+    seen = _capture_anthropic_request(
+        monkeypatch,
+        {"content": [{"type": "text", "text": "{}"}], "stop_reason": "end_turn"},
+    )
+
+    AnthropicJSONClient("claude-haiku-4-5").complete_json("sys", "user")
+    assert seen[0].get_header("Anthropic-workspace-id") is None
+
+
+def test_anthropic_tool_step_client_reads_workspace_id(monkeypatch):
+    from playground.user_sim.tool_client import AnthropicToolStepClient
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_test")
+    assert AnthropicToolStepClient("claude-haiku-4-5").workspace_id == "wrkspc_test"
