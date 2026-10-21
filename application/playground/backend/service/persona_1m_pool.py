@@ -662,13 +662,26 @@ def sample_production_1m(
         from backend.service.persona_1m_index import (
             Persona1MIndex,
             resolve_index_dir,
+            sample_proportional_row_ids_with_index,
             sample_row_ids_with_index,
         )
 
-        if allocation_norm != "proportional":
-            index_dir = resolve_index_dir(repo_root, paths)
-            if index_dir is not None:
-                with Persona1MIndex.open(index_dir) as index:
+        index_dir = resolve_index_dir(repo_root, paths)
+        if index_dir is not None:
+            with Persona1MIndex.open(index_dir) as index:
+                if allocation_norm == "proportional" and stratify_fields:
+                    # Proportional needs full cell populations: the postings
+                    # give them directly, so no Parquet scan is required.
+                    row_ids = sample_proportional_row_ids_with_index(
+                        index,
+                        sample_size=sample_size,
+                        seed=seed,
+                        sources=sources,
+                        dimension_filters=dimension_filters,
+                        stratify_fields=stratify_fields,
+                        portions=portions,
+                    )
+                else:
                     row_ids = sample_row_ids_with_index(
                         index,
                         sample_size=sample_size,
@@ -678,14 +691,18 @@ def sample_production_1m(
                         stratify_fields=stratify_fields,
                         sample_size_per_value_group=sample_size_per_value_group,
                     )
-                if row_ids is not None:
-                    if row_ids.size == 0:
-                        chosen = []
-                    else:
-                        counts = _parquet_row_counts(paths)
-                        chosen = _read_decoded_rows_at_global(
-                            counts, codec, [int(x) for x in row_ids]
-                        )
+            if row_ids is not None:
+                if row_ids.size == 0:
+                    chosen = []
+                else:
+                    counts = _parquet_row_counts(paths)
+                    chosen = _read_decoded_rows_at_global(
+                        counts, codec, [int(x) for x in row_ids]
+                    )
+    except ValueError:
+        # Allocation errors (infeasible portions, empty strata) are the same
+        # the streaming sampler would raise after a full scan — surface now.
+        raise
     except Exception:  # noqa: BLE001
         chosen = None
 

@@ -103,3 +103,53 @@ def test_index_source_filter_and_enrich(tmp_path, monkeypatch):
     with index_mod.Persona1MIndex.open(out) as index:
         assert index.has_field("source")
         assert index.row_ids_for("source", ["synthetic"]).size == 40
+
+
+def test_proportional_and_portions_use_index_without_full_scan(tmp_path, monkeypatch):
+    release = _write_tiny_release(tmp_path, rows=120)
+    monkeypatch.setenv(pool_mod.ENV_1M_DIR, str(release))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "persona/schema").mkdir(parents=True)
+    (repo / "persona/schema/dimension_categories.json").write_text(
+        json.dumps({"schemaVersion": "1.0", "personaSources": [], "devProfile": {"groups": []}}),
+        encoding="utf-8",
+    )
+    out = repo / "persona/datasets/matraix-persona-1m/indexes"
+    index_mod.build_indexes(repo_root=repo, output_dir=out, progress_every=0)
+
+    def _no_scan(*args, **kwargs):  # pragma: no cover - guard
+        raise AssertionError("proportional sampling must not fall back to a full scan")
+
+    monkeypatch.setattr(pool_mod, "_stratified_sample_production", _no_scan)
+
+    natural = pool_mod.sample_production_1m(
+        repo_root=repo,
+        sample_size=10,
+        seed=7,
+        dimension_filters={"age_bracket": ["18-24", "25-34"]},
+        stratify_fields=["age_bracket"],
+        sample_size_per_value_group=None,
+        allocation="proportional",
+    )
+    assert natural["sampleSize"] == 10
+    assert all(
+        card["dimensions"]["age_bracket"] in {"18-24", "25-34"}
+        for card in natural["personas"]
+    )
+
+    weighted = pool_mod.sample_production_1m(
+        repo_root=repo,
+        sample_size=10,
+        seed=7,
+        dimension_filters={"age_bracket": ["18-24", "25-34"]},
+        stratify_fields=["age_bracket"],
+        sample_size_per_value_group=None,
+        allocation="proportional",
+        portions={"age_bracket": {"18-24": 0.7, "25-34": 0.3}},
+    )
+    counts = {}
+    for card in weighted["personas"]:
+        value = card["dimensions"]["age_bracket"]
+        counts[value] = counts.get(value, 0) + 1
+    assert counts == {"18-24": 7, "25-34": 3}

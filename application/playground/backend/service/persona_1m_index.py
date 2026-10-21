@@ -437,6 +437,120 @@ def candidate_row_ids_for_filters(
     return intersect_sorted(parts)
 
 
+def sample_proportional_row_ids_with_index(
+    index: Persona1MIndex,
+    *,
+    sample_size: int,
+    seed: int,
+    sources: list[str] | None = None,
+    dimension_filters: dict[str, list[str]] | None = None,
+    stratify_fields: list[str] | None = None,
+    portions: dict[str, dict[str, float]] | None = None,
+) -> np.ndarray | None:
+    """Proportional / portions stratified draw using index cell populations.
+
+    Cell sizes come straight from the postings, so no Parquet scan is needed
+    to learn the population before allocating. Returns ``None`` when the index
+    cannot answer (so the caller falls back to the streaming sampler).
+    ``ValueError`` from allocation (infeasible target, empty strata) propagates.
+    """
+    from backend.service.persona_sampling_alloc import (
+        hamilton_allocate,
+        portions_allocate,
+    )
+
+    if sample_size < 1:
+        return np.zeros(0, dtype=np.uint32)
+    bare = [
+        str(field).removeprefix("dimensions.").strip()
+        for field in (stratify_fields or [])
+        if str(field).removeprefix("dimensions.").strip()
+    ]
+    if not bare:
+        return None
+    for field in bare:
+        if not index.has_field(field):
+            return None
+
+    parts: list[np.ndarray] = []
+    dim_base = candidate_row_ids_for_filters(index, dimension_filters=dimension_filters)
+    if dim_base is not None:
+        parts.append(dim_base)
+    if sources:
+        cleaned = [str(s).strip() for s in sources if str(s).strip()]
+        if cleaned:
+            if not index.has_field("source"):
+                return None
+            parts.append(index.row_ids_for("source", cleaned))
+    base = intersect_sorted(parts) if parts else None
+    if base is not None and base.size == 0:
+        return np.zeros(0, dtype=np.uint32)
+
+    field_values: list[list[str]] = []
+    for field in bare:
+        if dimension_filters and field in dimension_filters and dimension_filters[field]:
+            field_values.append(
+                [str(v).strip() for v in dimension_filters[field] if str(v).strip()]
+            )
+        else:
+            field_values.append(index.values_for_field(field))
+        if not field_values[-1]:
+            return np.zeros(0, dtype=np.uint32)
+
+    from itertools import product
+
+    cell_ids: dict[tuple[str, ...], np.ndarray] = {}
+    for cell in product(*field_values):
+        cell_parts: list[np.ndarray] = []
+        if base is not None:
+            cell_parts.append(base)
+        for field, value in zip(bare, cell):
+            cell_parts.append(index.row_ids_for(field, [value]))
+        ids = intersect_sorted(cell_parts)
+        if ids.size:
+            cell_ids[cell] = ids
+
+    if portions:
+        if len(bare) != 1:
+            raise ValueError(
+                "portions currently supports a single stratify field "
+                f"(got {', '.join(bare)})"
+            )
+        weights = portions.get(bare[0]) if isinstance(portions, dict) else None
+        if not isinstance(weights, dict) or not weights:
+            raise ValueError(
+                f"portions has no target weights for stratify field {bare[0]!r}"
+            )
+        counts = {cell[0]: int(ids.size) for cell, ids in cell_ids.items()}
+        for target_key in weights:
+            counts.setdefault(str(target_key), 0)
+        quotas = portions_allocate(
+            counts,
+            {str(key): float(weight) for key, weight in weights.items()},
+            sample_size,
+        )
+        key_map = {cell[0]: cell for cell in cell_ids}
+    else:
+        counts = {str(cell): int(ids.size) for cell, ids in cell_ids.items()}
+        quotas = hamilton_allocate(counts, sample_size)
+        key_map = {str(cell): cell for cell in cell_ids}
+
+    rng = np.random.default_rng(seed)
+    chosen: list[int] = []
+    for key_str in sorted(quotas):
+        take = quotas[key_str]
+        cell = key_map.get(key_str)
+        if take <= 0 or cell is None:
+            continue
+        ids = cell_ids[cell]
+        take = min(int(take), int(ids.size))
+        pick = rng.choice(ids, size=take, replace=False)
+        chosen.extend(int(x) for x in np.atleast_1d(pick))
+    out = np.asarray(chosen, dtype=np.uint32)
+    rng.shuffle(out)
+    return out
+
+
 def sample_row_ids_with_index(
     index: Persona1MIndex,
     *,

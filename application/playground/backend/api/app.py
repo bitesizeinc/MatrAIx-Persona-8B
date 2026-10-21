@@ -1213,7 +1213,11 @@ def create_app(catalog_path: Optional[str] = None) -> FastAPI:
     ) -> Dict[str, Any]:
         try:
             portions = body.portions
-            if not portions and body.taskPath:
+            # Task-declared mix weights only apply to a proportional draw; an
+            # explicit perCell / equalTotal request must not inherit them.
+            allocation_norm = str(body.allocation or "").strip().replace("-", "_").lower()
+            inherit_task_portions = allocation_norm in {"", "proportional"}
+            if not portions and body.taskPath and inherit_task_portions:
                 from backend.service.task_persona_strategy_service import (
                     get_task_persona_strategy,
                 )

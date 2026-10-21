@@ -554,7 +554,7 @@ export function SurveyEvalCockpit({
       left={
         <PersonaSamplingRail
           taskType="survey"
-          taskPath={activeTaskPath || null}
+          taskPath={setupTaskPath}
           personaModel={personaModel}
           onPersonaModelChange={setPersonaModel}
           personaModelOptions={personaModelOptions}
